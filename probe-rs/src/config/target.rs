@@ -1,11 +1,12 @@
-use super::{Chip, Core, CoreType, MemoryRegion, RawFlashAlgorithm, TargetDescriptionSource};
-
-use crate::architecture::arm::sequences::nxp::LPC55S69;
-use crate::architecture::arm::sequences::ArmDebugSequence;
-use crate::{core::Architecture, flashing::FlashLoader};
+use anyhow::anyhow;
+use probe_rs_target::ChipFamily;
 use std::sync::Arc;
 
+use super::{Core, CoreType, MemoryRegion, RawFlashAlgorithm, TargetDescriptionSource};
+use crate::architecture::arm::sequences::nxp::LPC55S69;
+use crate::architecture::arm::sequences::ArmDebugSequence;
 use crate::architecture::arm::sequences::DefaultArmSequence;
+use crate::{core::Architecture, flashing::FlashLoader};
 
 /// This describes a complete target with a fixed chip model and variant.
 #[derive(Clone)]
@@ -58,14 +59,25 @@ impl CoreArchitecture for CoreType {
 
 impl Target {
     /// Create a new target
-    pub fn new(
-        chip: &Chip,
-        cores: Vec<Core>,
-        flash_algorithms: Vec<RawFlashAlgorithm>,
-        source: TargetDescriptionSource,
-    ) -> Target {
+    pub fn new(family: &ChipFamily, chip_name: &str) -> Result<Target, anyhow::Error> {
+        let chip = family
+            .variants
+            .iter()
+            .find(|chip| &chip.name == chip_name)
+            .ok_or_else(|| anyhow!("Chip '{}' not found", chip_name))?;
+
+        // Collect relevant algorithms
+        let mut flash_algorithms = Vec::new();
+        for algo_name in chip.flash_algorithms.iter() {
+            let algo = family
+                .get_algorithm(algo_name)
+                .ok_or_else(|| anyhow!("Flash algorithm '{}' not found", algo_name))?;
+
+            flash_algorithms.push(algo.clone());
+        }
+
         // TODO: Figure out how to handle this if cores can have different architectures.
-        let mut debug_sequence = match cores[0].core_type.architecture() {
+        let mut debug_sequence = match chip.cores[0].core_type.architecture() {
             Architecture::Arm => DebugSequence::Arm(DefaultArmSequence::new()),
             Architecture::Riscv => DebugSequence::Riscv,
         };
@@ -75,14 +87,14 @@ impl Target {
             debug_sequence = DebugSequence::Arm(LPC55S69::new());
         }
 
-        Target {
+        Ok(Target {
             name: chip.name.clone(),
-            cores,
+            cores: chip.cores.clone(),
             flash_algorithms,
-            source,
+            source: family.source.clone(),
             memory_map: chip.memory_map.clone(),
             debug_sequence,
-        }
+        })
     }
 
     /// Get the architecture of the target

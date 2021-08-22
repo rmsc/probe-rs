@@ -32,6 +32,9 @@ pub enum RegistryError {
     /// An error occured while deserializing a YAML target description file.
     #[error("Deserializing the yaml encountered an error")]
     Yaml(#[from] serde_yaml::Error),
+    /// YAML target description file is logically invalid
+    #[error("Invalid YAML target definition")]
+    InvalidTarget(#[source] anyhow::Error),
     /// Unable to lock the registry.
     #[error("Unable to lock registry")]
     LockUnavailable,
@@ -253,20 +256,9 @@ impl Registry {
     }
 
     fn get_target(&self, family: &ChipFamily, chip: &Chip) -> Result<Target, RegistryError> {
-        // find relevant algorithms
-        let chip_algorithms = chip
-            .flash_algorithms
-            .iter()
-            .filter_map(|fa| family.get_algorithm(fa))
-            .cloned()
-            .collect();
-
-        Ok(Target::new(
-            chip,
-            chip.cores.clone(),
-            chip_algorithms,
-            family.source.clone(),
-        ))
+        let target =
+            Target::new(family, &chip.name).map_err(|e| RegistryError::InvalidTarget(e))?;
+        Ok(target)
     }
 
     fn add_target_from_yaml(&mut self, path_to_yaml: &Path) -> Result<(), RegistryError> {

@@ -332,4 +332,19 @@ mod tests {
         let registry = Registry::from_builtin_families();
         assert!(registry.get_target_by_name("nrf51822_Xxaa").is_ok());
     }
+
+    #[test]
+    fn validate_builtin() {
+        let registry = Registry::from_builtin_families();
+        for family in registry.families() {
+            for chip in &family.variants {
+                if let Err(e) = Target::new(family, &chip.name) {
+                    panic!(
+                        "Failed validating family '{}' chip '{}': {:?}",
+                        family.name, chip.name, e
+                    );
+                }
+            }
+        }
+    }
 }

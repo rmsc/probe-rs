@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::channel::*;
 use crate::{Channels, Error};
@@ -133,6 +134,7 @@ impl Rtt {
                 log::warn!("Buffer for down channel {} not initialized", i);
             }
         }
+        session.lock().unwrap().core(0)?.run()?;
 
         Ok(Some(Rtt {
             ptr,
@@ -156,6 +158,8 @@ impl Rtt {
     /// `core` can be e.g. an owned `Core` or a shared `Rc<Core>`. The session is only borrowed
     /// temporarily during detection.
     pub fn attach_region(session: Arc<Mutex<Session>>, region: &ScanRegion) -> Result<Rtt, Error> {
+        session.lock().unwrap().core(0)?.halt(Duration::from_millis(1000))?;
+
         let memory_map: &[MemoryRegion] = &session.lock().unwrap().target().memory_map.to_vec();
 
         let ranges: Vec<Range<u32>> = match region {
@@ -213,6 +217,7 @@ impl Rtt {
                 }
             }
         }
+        session.lock().unwrap().core(0)?.run()?;
 
         if instances.len() == 0 {
             return Err(Error::ControlBlockNotFound);

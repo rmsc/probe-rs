@@ -1,9 +1,10 @@
-use core::fmt;
 use probe_rs::{config::MemoryRegion, MemoryInterface, Session};
 use scroll::{Pread, LE};
 use std::cmp::min;
+use std::fmt;
 use std::io;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use crate::Error;
 
@@ -104,12 +105,15 @@ impl Channel {
     }
 
     fn read_pointers(&self, dir: &'static str) -> Result<(u32, u32), Error> {
+        self.session.lock().unwrap().core(0)?.halt(Duration::from_millis(1000))?;
+
         let mut block = [0u32; 2];
         self.session
             .lock()
             .unwrap()
             .core(0)?
             .read_32(self.ptr + Self::O_WRITE as u32, block.as_mut())?;
+        self.session.lock().unwrap().core(0)?.run()?;
 
         let write: u32 = block[0];
         let read: u32 = block[1];
@@ -164,7 +168,9 @@ impl UpChannel {
     pub fn mode(&self) -> Result<ChannelMode, Error> {
         let mut lock = self.0.session.lock().unwrap();
         let mut core = lock.core(0)?;
+        core.halt(Duration::from_millis(1000))?;
         let flags = core.read_word_32(self.0.ptr + Channel::O_FLAGS as u32)?;
+        core.run()?;
 
         match flags & 0x3 {
             0 => Ok(ChannelMode::NoBlockSkip),
@@ -182,12 +188,13 @@ impl UpChannel {
     pub fn set_mode(&self, mode: ChannelMode) -> Result<(), Error> {
         let mut lock = self.0.session.lock().unwrap();
         let mut core = lock.core(0)?;
-
+        core.halt(Duration::from_millis(1000))?;
         let flags = core.read_word_32(self.0.ptr + Channel::O_FLAGS as u32)?;
 
         let new_flags = (flags & !3) | (mode as u32);
         core.write_word_32(self.0.ptr + Channel::O_FLAGS as u32, new_flags)?;
 
+        core.run()?;
         Ok(())
     }
 
@@ -205,7 +212,9 @@ impl UpChannel {
 
             let mut lock = self.0.session.lock().unwrap();
             let mut core = lock.core(0)?;
+            core.halt(Duration::from_millis(1000))?;
             core.read(self.0.buffer_ptr + read, &mut buf[..count])?;
+            core.run()?;
 
             total += count;
             read += count as u32;
@@ -233,7 +242,9 @@ impl UpChannel {
             // Write read pointer back to target if something was read
             let mut lock = self.0.session.lock().unwrap();
             let mut core = lock.core(0)?;
+            core.halt(Duration::from_millis(1000))?;
             core.write_word_32(self.0.ptr + Channel::O_READ as u32, read)?;
+            core.run()?;
         }
 
         Ok(total)
@@ -314,6 +325,7 @@ impl DownChannel {
         let mut total = 0;
 
         // Write while buffer has space for data and output contains data (maximum of two iterations)
+        self.0.session.lock().unwrap().core(0)?.halt(Duration::from_millis(1000))?;
         while buf.len() > 0 {
             let count = min(self.writable_contiguous(write, read), buf.len());
             if count == 0 {
@@ -340,6 +352,7 @@ impl DownChannel {
         let mut lock = self.0.session.lock().unwrap();
         let mut core = lock.core(0)?;
         core.write_word_32(self.0.ptr + Channel::O_WRITE as u32, write)?;
+        core.run()?;
 
         Ok(total)
     }
@@ -386,6 +399,8 @@ fn read_c_string(
     memory_map: &[MemoryRegion],
     ptr: u32,
 ) -> Result<Option<String>, Error> {
+    session.core(0)?.halt(Duration::from_millis(1000))?;
+
     // Find out which memory range contains the pointer
     let range = memory_map
         .iter()
@@ -399,12 +414,16 @@ fn read_c_string(
     // If the pointer is not within any valid range, return None.
     let range = match range {
         Some(r) => r,
-        None => return Ok(None),
+        None => {
+            session.core(0)?.run()?;
+            return Ok(None);
+        }
     };
 
     // Read up to 128 bytes not going past the end of the region
     let mut bytes = vec![0u8; min(128, (range.end - ptr) as usize)];
     session.core(0)?.read_8(ptr, bytes.as_mut())?;
+    session.core(0)?.run()?;
 
     // If the bytes read contain a null, return the preceding part as a string, otherwise None.
     Ok(bytes
